@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import './index.css';
 import { useGameStore } from './state/useGameStore';
 import { useMultiplayerStore } from './state/useMultiplayerStore';
+import type { NetPlayer } from './types';
 
 type Mode = 'home' | 'solo' | 'multi';
 
@@ -91,6 +92,44 @@ const Timer = ({ seconds }: { seconds: number | null }) => {
   );
 };
 
+// Player Status List Component
+const PlayerStatusList = ({ 
+  players, 
+  hostId,
+  statusKey,
+  statusLabel,
+  showAll = true,
+}: { 
+  players: NetPlayer[];
+  hostId: string;
+  statusKey: 'hasViewedCard' | 'hasAnswered' | 'hasVoted';
+  statusLabel: string;
+  showAll?: boolean;
+}) => {
+  const doneCount = players.filter(p => p[statusKey]).length;
+  
+  return (
+    <div className="player-status-section">
+      <div className="player-status-header">
+        <span className="player-status-label">{statusLabel}</span>
+        <span className="player-status-count">{doneCount}/{players.length}</span>
+      </div>
+      {showAll && (
+        <div className="player-status-list">
+          {players.map((p) => (
+            <div key={p.id} className={`player-status-item ${p[statusKey] ? 'done' : 'waiting'}`}>
+              <span className="player-status-icon">{p[statusKey] ? '✓' : '○'}</span>
+              <span className="player-status-name">
+                {hostId === p.id ? '⭐ ' : ''}{p.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Home Screen
 function Home({ onSelect }: { onSelect: (mode: Mode) => void }) {
   return (
@@ -118,7 +157,7 @@ function Home({ onSelect }: { onSelect: (mode: Mode) => void }) {
   );
 }
 
-// Solo/Pass & Play Mode (unchanged)
+// Solo/Pass & Play Mode
 function SoloView({ onBack }: { onBack: () => void }) {
   const store = useGameStore();
   const [nameInput, setNameInput] = useState(store.players.map((p) => p.name).join('\n'));
@@ -307,7 +346,7 @@ function SoloView({ onBack }: { onBack: () => void }) {
   );
 }
 
-// Multiplayer Mode - Updated with answering phase
+// Multiplayer Mode - Updated with player status tracking
 function MultiplayerView({ onBack }: { onBack: () => void }) {
   const store = useMultiplayerStore();
   const [name, setName] = useState('');
@@ -317,6 +356,7 @@ function MultiplayerView({ onBack }: { onBack: () => void }) {
   const [prompt, setPrompt] = useState<string | null>(null);
   const [answer, setAnswer] = useState('');
   const [hasVoted, setHasVoted] = useState(false);
+  const [hasClickedReady, setHasClickedReady] = useState(false);
 
   const room = store.room;
   const myIndex = store.getMyPlayerIndex();
@@ -331,6 +371,7 @@ function MultiplayerView({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     if (store.currentPhase === 'deal' && room && myIndex >= 0) {
       store.requestPrompt(myIndex).then((p) => setPrompt(p));
+      setHasClickedReady(false);
     }
     if (store.currentPhase === 'voting') {
       setHasVoted(false);
@@ -338,6 +379,7 @@ function MultiplayerView({ onBack }: { onBack: () => void }) {
     if (store.currentPhase === 'waiting') {
       setAnswer('');
       setPrompt(null);
+      setHasClickedReady(false);
     }
   }, [store.currentPhase, room, myIndex]);
 
@@ -346,6 +388,13 @@ function MultiplayerView({ onBack }: { onBack: () => void }) {
       await store.submitAnswer(answer.trim());
     }
   }, [answer, store]);
+
+  const handleReady = () => {
+    if (!hasClickedReady) {
+      setHasClickedReady(true);
+      store.cardViewed();
+    }
+  };
 
   // Render functions
   const renderHome = () => (
@@ -442,70 +491,99 @@ function MultiplayerView({ onBack }: { onBack: () => void }) {
     </Card>
   );
 
-  const renderDeal = () => (
-    <Card>
-      <div className="card-header">
-        <div>
-          <p className="eyebrow">Your Secret Prompt</p>
-          <h2>Don't Share!</h2>
+  const renderDeal = () => {
+    const myPlayer = room?.players[myIndex];
+    const alreadyReady = myPlayer?.hasViewedCard || hasClickedReady;
+    
+    return (
+      <Card>
+        <div className="card-header">
+          <div>
+            <p className="eyebrow">Your Secret Prompt</p>
+            <h2>Don't Share!</h2>
+          </div>
         </div>
-        <Pill label={`${room?.currentPlayerIndex || 0}/${room?.players.length || 0} ready`} />
-      </div>
-      <div className="prompt-display" style={{ fontSize: 18, padding: 20 }}>
-        {prompt ?? '⏳ Loading...'}
-      </div>
-      <p className="muted" style={{ textAlign: 'center', marginTop: 16 }}>
-        Memorize your prompt, then tap ready.
-      </p>
-      <Button full onClick={() => store.cardViewed()} style={{ marginTop: 20 }}>
-        I'm Ready ✓
-      </Button>
-    </Card>
-  );
-
-  const renderAnswering = () => (
-    <Card>
-      <div className="card-header">
-        <div>
-          <p className="eyebrow">Answer Time</p>
-          <h2>Type Your Response</h2>
+        <div className="prompt-display" style={{ fontSize: 18, padding: 20 }}>
+          {prompt ?? '⏳ Loading...'}
         </div>
-        <Timer seconds={timeLeft} />
-      </div>
-      <div className="prompt-display" style={{ fontSize: 16, marginBottom: 16 }}>
-        {prompt}
-      </div>
-      {!store.hasSubmittedAnswer ? (
-        <>
-          <label className="label">Your Answer</label>
-          <textarea
-            className="input"
-            rows={3}
-            value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            placeholder="Type your answer..."
-            maxLength={280}
-            disabled={store.hasSubmittedAnswer}
+        
+        {/* Player status list */}
+        {room && (
+          <PlayerStatusList 
+            players={room.players}
+            hostId={room.hostId}
+            statusKey="hasViewedCard"
+            statusLabel="Ready to play"
           />
-          <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-            {answer.length}/280 • {room?.answeredCount || 0}/{room?.players.length || 0} answered
-          </p>
-          <Button
-            full
-            onClick={handleSubmitAnswer}
-            disabled={!answer.trim()}
-            style={{ marginTop: 16 }}
-          >
-            Submit Answer
-          </Button>
-        </>
-      ) : (
-        <div className="prompt-display" style={{ background: 'var(--accent-soft)' }}>
-          ✅ Answer submitted! Waiting for others... ({room?.answeredCount || 0}/{room?.players.length || 0})
+        )}
+        
+        <Button 
+          full 
+          onClick={handleReady} 
+          disabled={alreadyReady}
+          style={{ marginTop: 16 }}
+        >
+          {alreadyReady ? '✓ Waiting for others...' : "I'm Ready ✓"}
+        </Button>
+      </Card>
+    );
+  };
+
+  const renderAnswering = () => {
+    return (
+      <Card>
+        <div className="card-header">
+          <div>
+            <p className="eyebrow">Answer Time</p>
+            <h2>Type Your Response</h2>
+          </div>
+          <Timer seconds={timeLeft} />
         </div>
-      )}
-    </Card>
-  );
+        <div className="prompt-display" style={{ fontSize: 16, marginBottom: 16 }}>
+          {prompt}
+        </div>
+        
+        {!store.hasSubmittedAnswer ? (
+          <>
+            <label className="label">Your Answer</label>
+            <textarea
+              className="input"
+              rows={3}
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              placeholder="Type your answer..."
+              maxLength={280}
+            />
+            <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              {answer.length}/280
+            </p>
+            <Button
+              full
+              onClick={handleSubmitAnswer}
+              disabled={!answer.trim()}
+              style={{ marginTop: 12 }}
+            >
+              Submit Answer
+            </Button>
+          </>
+        ) : (
+          <div className="prompt-display" style={{ background: 'var(--accent-soft)', marginBottom: 16 }}>
+            ✅ Answer submitted!
+          </div>
+        )}
+        
+        {/* Player status list */}
+        {room && (
+          <PlayerStatusList 
+            players={room.players}
+            hostId={room.hostId}
+            statusKey="hasAnswered"
+            statusLabel="Answers submitted"
+          />
+        )}
+      </Card>
+    );
+  };
 
   const renderDiscussion = () => {
     const answers = store.getAnswers();
@@ -518,7 +596,7 @@ function MultiplayerView({ onBack }: { onBack: () => void }) {
           </div>
         </div>
         <p className="muted" style={{ marginBottom: 16 }}>
-          One of these answers is from the imposter with a different question!
+          One of these answers is from the imposter with a different question! 🕵️
         </p>
         <div className="stack gap-sm">
           {answers.map((a, idx) => (
@@ -528,64 +606,76 @@ function MultiplayerView({ onBack }: { onBack: () => void }) {
             </div>
           ))}
         </div>
-        {isHost && (
+        {isHost ? (
           <Button full onClick={() => store.startVoting()} style={{ marginTop: 20 }}>
             Start Voting
           </Button>
-        )}
-        {!isHost && (
+        ) : (
           <p className="muted" style={{ textAlign: 'center', marginTop: 16 }}>
-            Discuss who seems suspicious...
+            💬 Discuss who seems suspicious... Host will start voting.
           </p>
         )}
       </Card>
     );
   };
 
-  const renderVoting = () => (
-    <Card>
-      <div className="card-header">
-        <div>
-          <p className="eyebrow">Voting</p>
-          <h2>Pick the Imposter</h2>
+  const renderVoting = () => {
+    const myPlayer = room?.players[myIndex];
+    const alreadyVoted = myPlayer?.hasVoted || hasVoted;
+    
+    return (
+      <Card>
+        <div className="card-header">
+          <div>
+            <p className="eyebrow">Voting</p>
+            <h2>Pick the Imposter</h2>
+          </div>
+          <Timer seconds={timeLeft} />
         </div>
-        <Timer seconds={timeLeft} />
-      </div>
-      <p className="muted" style={{ marginBottom: 8 }}>
-        {room?.votedCount || 0}/{room?.players.length || 0} voted
-      </p>
-      {!hasVoted ? (
-        <>
-          <label className="label">Who's the imposter?</label>
-          <select className="input" value={vote} onChange={(e) => setVote(e.target.value)}>
-            <option value="">Select a player...</option>
-            {room?.players.map((p, idx) =>
-              idx === myIndex ? null : (
-                <option key={p.id} value={idx}>{p.name}</option>
-              ),
-            )}
-          </select>
-          <Button
-            full
-            disabled={vote === ''}
-            onClick={() => {
-              if (vote !== '') {
-                store.castVote(myIndex, Number(vote));
-                setHasVoted(true);
-              }
-            }}
-            style={{ marginTop: 20 }}
-          >
-            Submit Vote
-          </Button>
-        </>
-      ) : (
-        <div className="prompt-display">
-          ✅ Vote submitted! Waiting for others...
-        </div>
-      )}
-    </Card>
-  );
+        
+        {!alreadyVoted ? (
+          <>
+            <label className="label">Who's the imposter?</label>
+            <select className="input" value={vote} onChange={(e) => setVote(e.target.value)}>
+              <option value="">Select a player...</option>
+              {room?.players.map((p, idx) =>
+                idx === myIndex ? null : (
+                  <option key={p.id} value={idx}>{p.name}</option>
+                ),
+              )}
+            </select>
+            <Button
+              full
+              disabled={vote === ''}
+              onClick={() => {
+                if (vote !== '') {
+                  store.castVote(myIndex, Number(vote));
+                  setHasVoted(true);
+                }
+              }}
+              style={{ marginTop: 16 }}
+            >
+              Submit Vote
+            </Button>
+          </>
+        ) : (
+          <div className="prompt-display" style={{ background: 'var(--accent-soft)', marginBottom: 16 }}>
+            ✅ Vote submitted!
+          </div>
+        )}
+        
+        {/* Player status list */}
+        {room && (
+          <PlayerStatusList 
+            players={room.players}
+            hostId={room.hostId}
+            statusKey="hasVoted"
+            statusLabel="Votes cast"
+          />
+        )}
+      </Card>
+    );
+  };
 
   const renderResults = () => {
     const crewWon = room?.imposterIndex === room?.eliminatedPlayerIndex;
@@ -612,17 +702,16 @@ function MultiplayerView({ onBack }: { onBack: () => void }) {
           <div className="stack gap-xs" style={{ padding: 12 }}>
             {answers.map((a, idx) => (
               <p key={idx}>
-                <strong style={{ color: room?.imposterIndex === idx ? 'var(--accent)' : 'inherit' }}>
-                  {a.name}{room?.imposterIndex === idx ? ' 😈' : ''}:
+                <strong style={{ color: room?.imposterIndex === a.playerIndex ? 'var(--accent)' : 'inherit' }}>
+                  {a.name}{room?.imposterIndex === a.playerIndex ? ' 😈' : ''}:
                 </strong> {a.answer}
               </p>
             ))}
           </div>
         </details>
-        {isHost && (
+        {isHost ? (
           <Button full onClick={() => store.playAgain()}>Play Again</Button>
-        )}
-        {!isHost && (
+        ) : (
           <div className="prompt-display">⏳ Waiting for host...</div>
         )}
       </Card>

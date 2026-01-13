@@ -319,13 +319,23 @@ io.on('connection', (socket) => {
 
 // Sanitize room data before sending to clients (hide sensitive info)
 function sanitizeRoom(room) {
-  const answeredCount = Object.keys(room.answers || {}).length;
-  const votedCount = Object.keys(room.votes || {}).length;
+  // Track who has done what
+  const viewedCards = room.viewedCards ? Array.from(room.viewedCards) : [];
+  const answeredIndices = Object.keys(room.answers || {}).map(Number);
+  const votedIndices = Object.keys(room.votes || {}).map(Number);
+  
+  // Create player status for each player
+  const playersWithStatus = room.players.map((player, idx) => ({
+    ...player,
+    hasViewedCard: viewedCards.includes(player.id),
+    hasAnswered: answeredIndices.includes(idx),
+    hasVoted: votedIndices.includes(idx),
+  }));
   
   return {
     code: room.code,
     hostId: room.hostId,
-    players: room.players,
+    players: playersWithStatus,
     phase: room.phase,
     category: room.category,
     currentPlayerIndex: room.currentPlayerIndex,
@@ -337,14 +347,16 @@ function sanitizeRoom(room) {
     timerEndTime: room.timerEndTime,
     timerType: room.timerType,
     settings: room.settings,
-    // Progress info
-    answeredCount,
-    votedCount,
+    // Progress counts
+    viewedCount: viewedCards.length,
+    answeredCount: answeredIndices.length,
+    votedCount: votedIndices.length,
     // Answers (only in discussion/voting/results)
     ...(room.phase === 'discussion' || room.phase === 'voting' || room.phase === 'results' ? {
       answers: room.players.map((p, idx) => ({
         name: p.name,
         answer: room.answers[idx] || "(No answer)",
+        playerIndex: idx,
       })),
     } : {}),
     // Reveal imposter only in results

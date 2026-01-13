@@ -37,11 +37,15 @@ export interface NetPlayer {
   name: string;
   isHost: boolean;
   isConnected: boolean;
+  hasViewedCard?: boolean;
+  hasAnswered?: boolean;
+  hasVoted?: boolean;
 }
 
 export interface PlayerAnswer {
   name: string;
   answer: string;
+  playerIndex: number;
 }
 
 export interface RoomSettings {
@@ -65,6 +69,7 @@ export interface NetRoom {
   timerType: 'answering' | 'voting' | null;
   settings: RoomSettings;
   // Progress tracking
+  viewedCount: number;
   answeredCount: number;
   votedCount: number;
   // Answers (available after answering phase)
