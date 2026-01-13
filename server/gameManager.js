@@ -135,6 +135,7 @@ class GameManager {
     room.imposterIndex = imposterIndex;
     room.phase = 'deal';
     room.currentPlayerIndex = 0;
+    room.viewedCards = new Set(); // Track who has viewed their card
     room.votes = {};
     room.answers = {};
     room.eliminatedPlayerIndex = null;
@@ -323,6 +324,7 @@ class GameManager {
     room.imposterIndex = null;
     room.votes = {};
     room.answers = {};
+    room.viewedCards = new Set();
     room.eliminatedPlayerIndex = null;
     room.currentPlayerIndex = 0;
     room.currentVoterIndex = 0;
@@ -332,15 +334,22 @@ class GameManager {
     return room;
   }
 
-  // Advance deal phase
-  advanceDeal(code) {
+  // Mark player as viewed their card
+  playerViewedCard(code, playerId) {
     const room = this.rooms.get(code);
     if (!room) return null;
 
-    room.currentPlayerIndex++;
+    // Initialize viewedCards set if needed
+    if (!room.viewedCards) {
+      room.viewedCards = new Set();
+    }
+
+    // Add this player to viewed set
+    room.viewedCards.add(playerId);
+    room.currentPlayerIndex = room.viewedCards.size;
     
     // Check if all players have viewed
-    const allViewed = room.currentPlayerIndex >= room.players.length;
+    const allViewed = room.viewedCards.size >= room.players.length;
     
     return { room, allViewed };
   }

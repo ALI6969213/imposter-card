@@ -141,12 +141,16 @@ io.on('connection', (socket) => {
   socket.on('card_viewed', () => {
     if (!currentRoom) return;
 
-    const result = gameManager.advanceDeal(currentRoom);
+    console.log(`Player ${socket.id} viewed card in room ${currentRoom}`);
+    
+    const result = gameManager.playerViewedCard(currentRoom, socket.id);
     if (result && result.room) {
+      console.log(`Room ${currentRoom}: ${result.room.currentPlayerIndex}/${result.room.players.length} viewed`);
       broadcastRoomUpdate(currentRoom, result.room);
       
       // If all players viewed, start answering phase
       if (result.allViewed) {
+        console.log(`All players viewed in room ${currentRoom}, starting answering phase`);
         const room = gameManager.startAnswering(currentRoom, (code, updatedRoom) => {
           // Timer expired - auto advance to discussion
           if (updatedRoom) {
