@@ -1,24 +1,22 @@
 import { create } from 'zustand';
-import { socketService, Room, Player } from '../services/socketService';
+import prompts from '../data/prompts.json';
+import type { NetRoom, NetPlayer } from '../types';
+import { socketService } from '../services/socketService';
 
 type GamePhase = 'home' | 'join' | 'waiting' | 'deal' | 'discussion' | 'voting' | 'results';
 
 interface MultiplayerState {
-  // Connection state
   isConnected: boolean;
   isConnecting: boolean;
   connectionError: string | null;
-  
-  // Room state
-  room: Room | null;
+
+  room: NetRoom | null;
   playerId: string | null;
   playerName: string | null;
-  
-  // UI state
+
   currentPhase: GamePhase;
   currentPrompt: string | null;
-  
-  // Actions
+
   connect: () => Promise<void>;
   disconnect: () => void;
   createRoom: (name: string) => Promise<{ success: boolean; error?: string }>;
@@ -32,44 +30,41 @@ interface MultiplayerState {
   playAgain: () => Promise<void>;
   goToHome: () => void;
   goToJoin: () => void;
-  
-  // Computed
+
   isHost: () => boolean;
   getMyPlayerIndex: () => number;
   getCategories: () => string[];
 }
 
 export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
-  // Set up socket event listeners
-  socketService.on('player_joined', ({ players }: { players: Player[] }) => {
+  socketService.on('player_joined', ({ players }: { players: NetPlayer[] }) => {
     const room = get().room;
     if (room) {
       set({ room: { ...room, players } });
     }
   });
 
-  socketService.on('player_left', ({ players, newHostId }: { players: Player[]; newHostId: string }) => {
+  socketService.on('player_left', ({ players, newHostId }: { players: NetPlayer[]; newHostId: string }) => {
     const room = get().room;
     if (room) {
       set({ room: { ...room, players, hostId: newHostId } });
     }
   });
 
-  socketService.on('game_started', ({ room }: { room: Room }) => {
+  socketService.on('game_started', ({ room }: { room: NetRoom }) => {
     set({ room, currentPhase: 'deal' });
   });
 
-  socketService.on('room_updated', ({ room }: { room: Room }) => {
+  socketService.on('room_updated', ({ room }: { room: NetRoom }) => {
     const currentPhase = get().currentPhase;
     let newPhase: GamePhase = currentPhase;
-    
-    // Map server phase to client phase
+
     if (room.phase === 'waiting') newPhase = 'waiting';
     else if (room.phase === 'deal') newPhase = 'deal';
     else if (room.phase === 'discussion') newPhase = 'discussion';
     else if (room.phase === 'voting') newPhase = 'voting';
     else if (room.phase === 'results') newPhase = 'results';
-    
+
     set({ room, currentPhase: newPhase });
   });
 
@@ -78,7 +73,6 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
   });
 
   return {
-    // Initial state
     isConnected: false,
     isConnecting: false,
     connectionError: null,
@@ -88,7 +82,6 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
     currentPhase: 'home',
     currentPrompt: null,
 
-    // Actions
     connect: async () => {
       set({ isConnecting: true, connectionError: null });
       try {
@@ -194,7 +187,6 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
       set({ currentPhase: 'join' });
     },
 
-    // Computed
     isHost: () => {
       const { room, playerId } = get();
       return room?.hostId === playerId;
@@ -203,13 +195,11 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
     getMyPlayerIndex: () => {
       const { room, playerId } = get();
       if (!room || !playerId) return -1;
-      return room.players.findIndex(p => p.id === playerId);
+      return room.players.findIndex((p) => p.id === playerId);
     },
 
     getCategories: () => {
-      // Import prompts and get unique categories
-      const prompts = require('../data/prompts.json');
-      const categories = new Set(prompts.map((p: any) => p.category));
+      const categories = new Set((prompts as any[]).map((p) => p.category));
       return Array.from(categories).sort() as string[];
     },
   };

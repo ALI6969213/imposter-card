@@ -1,130 +1,49 @@
-# Imposter Cards
+# Imposter Cards (Web + Multiplayer Server)
 
-A social deduction party game built with React Native and Expo. One player receives a different prompt than everyone else - find the imposter among your friends!
+Mobile-optimized web app (PWA-ready) plus a Socket.io server for online rooms. No native/Expo assets remain.
 
-## Features
+## Structure
+```
+web/      # Vite + React + TS mobile web app (PWA)
+server/   # Node + Express + Socket.io backend
+```
 
-- 🎮 **3-12 Players** - Perfect for parties and gatherings
-- 🎯 **6 Categories** - General, Deep, Social, Fun, Food, Entertainment
-- ⏱️ **Discussion Timer** - Customizable 1-10 minute timer
-- 🗳️ **Secret Voting** - Private voting system
-- 🎨 **Beautiful UI** - Dark mode with electric crimson accents
-- 📱 **iOS Optimized** - Native haptic feedback and animations
+## Requirements
+- Node 18+
+- npm
 
-## How to Play
-
-1. **Setup**: Add 3-12 player names and select a category
-2. **Deal**: Pass the device around - each player sees their secret prompt
-3. **Discuss**: Everyone answers their prompt. One person has a different question!
-4. **Vote**: Each player secretly votes for who they think is the imposter
-5. **Reveal**: See if the group correctly identified the imposter!
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+ 
-- npm or yarn
-- Expo CLI
-- iOS Simulator or physical iOS device
-
-### Installation
-
-```bash
-# Navigate to the project
-cd MafiaCards
-
-# Install dependencies
+## Frontend (web)
+```
+cd web
 npm install
-
-# Start the development server
-npx expo start
-
-# Run on iOS
-npx expo start --ios
+npm run dev        # local
+npm run build      # production build to dist/
 ```
 
-### Running on Device
+### PWA / Add to Home Screen
+- Manifest + service worker included.
+- In-app banner instructs: iOS Safari Share → Add to Home Screen; Android Chrome menu → Add to Home Screen.
 
-1. Install the [Expo Go](https://expo.dev/client) app on your iPhone
-2. Run `npx expo start`
-3. Scan the QR code with your phone's camera
-
-## Project Structure
-
+### Vercel deploy (from repo root)
 ```
-MafiaCards/
-├── App.tsx              # Main app entry point
-├── src/
-│   ├── components/      # Reusable UI components
-│   │   ├── Button.tsx
-│   │   ├── Card.tsx
-│   │   ├── Header.tsx
-│   │   └── ScreenContainer.tsx
-│   ├── screens/         # Game screens
-│   │   ├── HomeScreen.tsx
-│   │   ├── LobbyScreen.tsx
-│   │   ├── DealScreen.tsx
-│   │   ├── DiscussionScreen.tsx
-│   │   ├── VotingScreen.tsx
-│   │   └── ResultsScreen.tsx
-│   ├── store/           # State management (Zustand)
-│   │   └── gameStore.ts
-│   ├── theme/           # Colors and typography
-│   │   ├── colors.ts
-│   │   └── typography.ts
-│   ├── types/           # TypeScript types
-│   │   └── index.ts
-│   ├── data/            # Static data
-│   │   └── prompts.json
-│   └── utils/           # Utility functions
-│       └── haptics.ts
-├── assets/              # App icons and splash screen
-├── package.json
-└── app.json
+vercel --cwd web --prod
+# or use dashboard, set:
+#  Root directory: web
+#  Framework: Vite
+#  Build command: npm run build
+#  Output dir: dist
 ```
 
-## Tech Stack
-
-- **React Native** - Cross-platform mobile framework
-- **Expo** - Development platform and tooling
-- **TypeScript** - Type safety
-- **Zustand** - Lightweight state management
-- **React Native Reanimated** - Smooth animations
-- **Expo Haptics** - Native haptic feedback
-
-## Game Phases
-
-1. **Home** - Start screen with game branding
-2. **Lobby** - Player setup and category selection
-3. **Deal** - Secret prompt distribution
-4. **Discussion** - Timer-based discussion phase
-5. **Voting** - Private vote casting
-6. **Results** - Vote tally and imposter reveal
-
-## Customization
-
-### Adding Prompts
-
-Edit `src/data/prompts.json` to add new prompt pairs:
-
-```json
-{
-  "id": "custom-1",
-  "category": "general",
-  "majority": "Question for most players",
-  "imposter": "Different question for imposter"
-}
+## Backend (server)
+```
+cd server
+npm install
+npm start      # prod
+npm run dev    # dev with nodemon
 ```
 
-### Adding Categories
+Server URL used by frontend: `https://imposter-card.onrender.com`.
 
-Add new prompts with a new category name - categories are auto-detected from the prompts data.
-
-## License
-
-MIT License - feel free to use and modify!
-
-## Credits
-
-Inspired by social deduction games like Werewolf, Mafia, and The Chameleon.
+## Game flow
+- Pass & Play: local deal/discussion/voting/results.
+- Multiplayer: create/join via 4-digit code; host starts, deal, discussion, voting, results.

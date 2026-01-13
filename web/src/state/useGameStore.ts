@@ -1,13 +1,11 @@
 import { create } from 'zustand';
-import { GamePhase, GameState, Player, PromptPair, AppTheme } from '../types';
 import prompts from '../data/prompts.json';
+import type { AppTheme, GamePhase, GameState, Player, PromptPair } from '../types';
 
 interface GameStore extends GameState {
-  // Theme
   theme: AppTheme;
   setTheme: (theme: AppTheme) => void;
-  
-  // Phase navigation
+
   setPhase: (phase: GamePhase) => void;
   goToHome: () => void;
   goToLobby: () => void;
@@ -15,20 +13,15 @@ interface GameStore extends GameState {
   goToDiscussion: () => void;
   goToVoting: () => void;
   goToResults: () => void;
-  
-  // Player management
+
   configurePlayers: (names: string[]) => void;
-  
-  // Game management
   startRound: (category: string) => boolean;
   advancePhase: () => void;
   resetGame: () => void;
-  
-  // Prompts
+
   getCategories: () => string[];
   promptForPlayer: (index: number) => string | null;
-  
-  // Voting
+
   castVote: (voterIndex: number, votedForIndex: number) => boolean;
   hasVoted: (voterIndex: number) => boolean;
   allVotesCast: () => boolean;
@@ -36,10 +29,9 @@ interface GameStore extends GameState {
   isImposterEliminated: () => boolean;
 }
 
-const generateId = () => Math.random().toString(36).substring(2, 9);
+const generateId = () => crypto.randomUUID();
 
 export const useGameStore = create<GameStore>((set, get) => ({
-  // Initial state
   players: [],
   currentPhase: 'home',
   currentCategory: null,
@@ -48,11 +40,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   votes: {},
   eliminatedPlayerIndex: null,
   theme: 'dark',
-  
-  // Theme
+
   setTheme: (theme) => set({ theme }),
-  
-  // Phase navigation
+
   setPhase: (phase) => set({ currentPhase: phase }),
   goToHome: () => set({ currentPhase: 'home' }),
   goToLobby: () => set({ currentPhase: 'lobby' }),
@@ -60,33 +50,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
   goToDiscussion: () => set({ currentPhase: 'discussion' }),
   goToVoting: () => set({ currentPhase: 'voting' }),
   goToResults: () => set({ currentPhase: 'results' }),
-  
-  // Player management
+
   configurePlayers: (names) => {
     const trimmedNames = names
-      .map(name => name.trim())
-      .filter(name => name.length > 0);
-    
-    const players: Player[] = trimmedNames.map(name => ({
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
+
+    const players: Player[] = trimmedNames.map((name) => ({
       id: generateId(),
       name,
     }));
-    
+
     set({ players });
   },
-  
-  // Game management
+
   startRound: (category) => {
     const state = get();
-    const categoryPrompts = (prompts as PromptPair[]).filter(p => p.category === category);
-    
+    const categoryPrompts = (prompts as PromptPair[]).filter((p) => p.category === category);
+
     if (categoryPrompts.length === 0 || state.players.length === 0) {
       return false;
     }
-    
+
     const randomPrompt = categoryPrompts[Math.floor(Math.random() * categoryPrompts.length)];
     const imposterIndex = Math.floor(Math.random() * state.players.length);
-    
+
     set({
       currentCategory: category,
       currentPromptPair: randomPrompt,
@@ -95,13 +83,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       eliminatedPlayerIndex: null,
       currentPhase: 'deal',
     });
-    
+
     return true;
   },
-  
+
   advancePhase: () => {
     const state = get();
-    
+
     switch (state.currentPhase) {
       case 'lobby':
         set({ currentPhase: 'deal' });
@@ -112,34 +100,35 @@ export const useGameStore = create<GameStore>((set, get) => ({
       case 'discussion':
         set({ currentPhase: 'voting' });
         break;
-      case 'voting':
-        // Calculate results before advancing
+      case 'voting': {
         const votes = state.votes;
         const voteCounts: Record<number, number> = {};
-        
-        Object.values(votes).forEach(votedForIndex => {
+
+        Object.values(votes).forEach((votedForIndex) => {
           voteCounts[votedForIndex] = (voteCounts[votedForIndex] || 0) + 1;
         });
-        
+
         const maxVotes = Math.max(...Object.values(voteCounts), 0);
         const tiedPlayers = Object.entries(voteCounts)
-          .filter(([_, count]) => count === maxVotes)
-          .map(([index]) => parseInt(index));
-        
-        const eliminatedIndex = tiedPlayers.length === 1
-          ? tiedPlayers[0]
-          : tiedPlayers[Math.floor(Math.random() * tiedPlayers.length)];
-        
-        set({ 
+          .filter(([, count]) => count === maxVotes)
+          .map(([index]) => parseInt(index, 10));
+
+        const eliminatedIndex =
+          tiedPlayers.length === 1
+            ? tiedPlayers[0]
+            : tiedPlayers[Math.floor(Math.random() * tiedPlayers.length)];
+
+        set({
           eliminatedPlayerIndex: eliminatedIndex,
           currentPhase: 'results',
         });
         break;
+      }
       default:
         break;
     }
   },
-  
+
   resetGame: () => {
     set({
       players: [],
@@ -151,31 +140,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
       eliminatedPlayerIndex: null,
     });
   },
-  
-  // Prompts
+
   getCategories: () => {
-    const categories = new Set((prompts as PromptPair[]).map(p => p.category));
+    const categories = new Set((prompts as PromptPair[]).map((p) => p.category));
     return Array.from(categories).sort();
   },
-  
+
   promptForPlayer: (index) => {
     const state = get();
-    
+
     if (!state.currentPromptPair || index < 0 || index >= state.players.length) {
       return null;
     }
-    
+
     if (index === state.imposterIndex) {
       return state.currentPromptPair.imposter;
     }
-    
+
     return state.currentPromptPair.majority;
   },
-  
-  // Voting
+
   castVote: (voterIndex, votedForIndex) => {
     const state = get();
-    
+
     if (
       voterIndex < 0 ||
       voterIndex >= state.players.length ||
@@ -187,31 +174,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
     ) {
       return false;
     }
-    
+
     set({ votes: { ...state.votes, [voterIndex]: votedForIndex } });
     return true;
   },
-  
-  hasVoted: (voterIndex) => {
-    return get().votes[voterIndex] !== undefined;
-  },
-  
+
+  hasVoted: (voterIndex) => get().votes[voterIndex] !== undefined,
+
   allVotesCast: () => {
     const state = get();
     return Object.keys(state.votes).length === state.players.length;
   },
-  
+
   getVoteTally: () => {
     const votes = get().votes;
     const tally: Record<number, number> = {};
-    
-    Object.values(votes).forEach(votedForIndex => {
+
+    Object.values(votes).forEach((votedForIndex) => {
       tally[votedForIndex] = (tally[votedForIndex] || 0) + 1;
     });
-    
+
     return tally;
   },
-  
+
   isImposterEliminated: () => {
     const state = get();
     return state.imposterIndex === state.eliminatedPlayerIndex;

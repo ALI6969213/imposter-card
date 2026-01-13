@@ -1,54 +1,18 @@
 import { io, Socket } from 'socket.io-client';
+import type { NetRoom } from '../types';
 
-// ============================================
-// SERVER URL CONFIGURATION
-// ============================================
-// Change this to your deployed server URL after deploying to Railway/Render
-// Local development: 'http://localhost:3001'
-// Production example: 'https://imposter-cards-server-production.up.railway.app'
-// ============================================
-const SERVER_URL = 'http://localhost:3001';
-// ============================================
-
-export interface Player {
-  id: string;
-  name: string;
-  isHost: boolean;
-  isConnected: boolean;
-}
-
-export interface Room {
-  code: string;
-  hostId: string;
-  players: Player[];
-  phase: 'waiting' | 'deal' | 'discussion' | 'voting' | 'results';
-  category: string | null;
-  currentPlayerIndex: number;
-  currentVoterIndex: number;
-  votes: Record<number, number>;
-  eliminatedPlayerIndex: number | null;
-  hasPrompt: boolean;
-  imposterIndex?: number;
-  promptPair?: {
-    id: string;
-    category: string;
-    majority: string;
-    imposter: string;
-  };
-}
-
-type Callback<T> = (response: T) => void;
+const SERVER_URL = 'https://imposter-card.onrender.com';
 
 interface CreateRoomResponse {
   success: boolean;
-  room?: Room;
+  room?: NetRoom;
   playerId?: string;
   error?: string;
 }
 
 interface JoinRoomResponse {
   success: boolean;
-  room?: Room;
+  room?: NetRoom;
   playerId?: string;
   error?: string;
 }
@@ -75,8 +39,6 @@ class SocketService {
         return;
       }
 
-      console.log('Connecting to server:', SERVER_URL);
-      
       this.socket = io(SERVER_URL, {
         transports: ['websocket', 'polling'],
         timeout: 10000,
@@ -86,21 +48,17 @@ class SocketService {
       });
 
       this.socket.on('connect', () => {
-        console.log('Connected to server');
         resolve();
       });
 
       this.socket.on('connect_error', (error) => {
-        console.error('Connection error:', error);
         reject(error);
       });
 
       this.socket.on('disconnect', (reason) => {
-        console.log('Disconnected:', reason);
         this.emit('disconnected', reason);
       });
 
-      // Forward room events to listeners
       this.socket.on('player_joined', (data) => this.emit('player_joined', data));
       this.socket.on('player_left', (data) => this.emit('player_left', data));
       this.socket.on('game_started', (data) => this.emit('game_started', data));
@@ -119,7 +77,6 @@ class SocketService {
     return this.socket?.connected ?? false;
   }
 
-  // Room management
   createRoom(name: string): Promise<CreateRoomResponse> {
     return new Promise((resolve) => {
       this.socket?.emit('create_room', { name }, (response: CreateRoomResponse) => {
@@ -140,7 +97,6 @@ class SocketService {
     this.socket?.emit('leave_room');
   }
 
-  // Game actions
   startGame(category: string): Promise<SimpleResponse> {
     return new Promise((resolve) => {
       this.socket?.emit('start_game', { category }, (response: SimpleResponse) => {
@@ -185,7 +141,6 @@ class SocketService {
     });
   }
 
-  // Event handling
   on(event: string, callback: Function): void {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
@@ -198,7 +153,7 @@ class SocketService {
   }
 
   private emit(event: string, data: any): void {
-    this.listeners.get(event)?.forEach(callback => callback(data));
+    this.listeners.get(event)?.forEach((callback) => callback(data));
   }
 }
 
