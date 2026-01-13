@@ -1,9 +1,8 @@
 import { create } from 'zustand';
-import prompts from '../data/prompts.json';
-import type { NetRoom, NetPlayer } from '../types';
+import type { NetRoom, NetPlayer, PlayerAnswer } from '../types';
 import { socketService } from '../services/socketService';
 
-type GamePhase = 'home' | 'join' | 'waiting' | 'deal' | 'discussion' | 'voting' | 'results';
+type GamePhase = 'home' | 'join' | 'waiting' | 'deal' | 'answering' | 'discussion' | 'voting' | 'results';
 
 interface MultiplayerState {
   isConnected: boolean;
@@ -16,15 +15,18 @@ interface MultiplayerState {
 
   currentPhase: GamePhase;
   currentPrompt: string | null;
+  hasSubmittedAnswer: boolean;
 
   connect: () => Promise<void>;
   disconnect: () => void;
   createRoom: (name: string) => Promise<{ success: boolean; error?: string }>;
   joinRoom: (code: string, name: string) => Promise<{ success: boolean; error?: string }>;
   leaveRoom: () => void;
+  updateSettings: (votingTime?: number, answerTime?: number) => Promise<void>;
   startGame: (category: string) => Promise<{ success: boolean; error?: string }>;
   requestPrompt: (playerIndex: number) => Promise<string | null>;
   cardViewed: () => void;
+  submitAnswer: (answer: string) => Promise<boolean>;
   startVoting: () => Promise<void>;
   castVote: (voterIndex: number, votedForIndex: number) => Promise<boolean>;
   playAgain: () => Promise<void>;
@@ -33,7 +35,8 @@ interface MultiplayerState {
 
   isHost: () => boolean;
   getMyPlayerIndex: () => number;
-  getCategories: () => string[];
+  getTimeRemaining: () => number | null;
+  getAnswers: () => PlayerAnswer[];
 }
 
 export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
@@ -52,15 +55,18 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
   });
 
   socketService.on('game_started', ({ room }: { room: NetRoom }) => {
-    set({ room, currentPhase: 'deal' });
+    set({ room, currentPhase: 'deal', hasSubmittedAnswer: false });
   });
 
   socketService.on('room_updated', ({ room }: { room: NetRoom }) => {
-    const currentPhase = get().currentPhase;
-    let newPhase: GamePhase = currentPhase;
+    let newPhase: GamePhase = get().currentPhase;
 
-    if (room.phase === 'waiting') newPhase = 'waiting';
+    if (room.phase === 'waiting') {
+      newPhase = 'waiting';
+      set({ hasSubmittedAnswer: false });
+    }
     else if (room.phase === 'deal') newPhase = 'deal';
+    else if (room.phase === 'answering') newPhase = 'answering';
     else if (room.phase === 'discussion') newPhase = 'discussion';
     else if (room.phase === 'voting') newPhase = 'voting';
     else if (room.phase === 'results') newPhase = 'results';
@@ -81,19 +87,19 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
     playerName: null,
     currentPhase: 'home',
     currentPrompt: null,
+    hasSubmittedAnswer: false,
 
     connect: async () => {
       set({ isConnecting: true, connectionError: null });
       try {
         await socketService.connect();
         set({ isConnected: true, isConnecting: false });
-      } catch (error) {
+      } catch {
         set({
           isConnected: false,
           isConnecting: false,
           connectionError: 'Failed to connect to server',
         });
-        throw error;
       }
     },
 
@@ -106,6 +112,7 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
         playerName: null,
         currentPhase: 'home',
         currentPrompt: null,
+        hasSubmittedAnswer: false,
       });
     },
 
@@ -144,7 +151,12 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
         playerId: null,
         currentPhase: 'home',
         currentPrompt: null,
+        hasSubmittedAnswer: false,
       });
+    },
+
+    updateSettings: async (votingTime?: number, answerTime?: number) => {
+      await socketService.updateSettings(votingTime, answerTime);
     },
 
     startGame: async (category: string) => {
@@ -163,6 +175,17 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
 
     cardViewed: () => {
       socketService.cardViewed();
+    },
+
+    submitAnswer: async (answer: string) => {
+      const myIndex = get().getMyPlayerIndex();
+      if (myIndex < 0) return false;
+      
+      const response = await socketService.submitAnswer(myIndex, answer);
+      if (response.success) {
+        set({ hasSubmittedAnswer: true });
+      }
+      return response.success;
     },
 
     startVoting: async () => {
@@ -198,9 +221,15 @@ export const useMultiplayerStore = create<MultiplayerState>((set, get) => {
       return room.players.findIndex((p) => p.id === playerId);
     },
 
-    getCategories: () => {
-      const categories = new Set((prompts as any[]).map((p) => p.category));
-      return Array.from(categories).sort() as string[];
+    getTimeRemaining: () => {
+      const { room } = get();
+      if (!room?.timerEndTime) return null;
+      return Math.max(0, Math.ceil((room.timerEndTime - Date.now()) / 1000));
+    },
+
+    getAnswers: () => {
+      const { room } = get();
+      return room?.answers || [];
     },
   };
 });

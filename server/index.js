@@ -3,7 +3,6 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const GameManager = require('./gameManager');
-const prompts = require('./prompts.json');
 
 const app = express();
 const server = http.createServer(app);
@@ -29,6 +28,16 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', rooms: gameManager.rooms.size });
 });
 
+// Broadcast room update to all players
+function broadcastRoomUpdate(roomCode, room) {
+  io.to(roomCode).emit('room_updated', { room: sanitizeRoom(room) });
+}
+
+// Broadcast timer tick
+function broadcastTimerTick(roomCode, timeRemaining) {
+  io.to(roomCode).emit('timer_tick', { timeRemaining });
+}
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
@@ -45,6 +54,26 @@ io.on('connection', (socket) => {
     
     console.log(`Room ${room.code} created by ${name}`);
     callback({ success: true, room: sanitizeRoom(room), playerId: socket.id });
+  });
+
+  // Update room settings (host only)
+  socket.on('update_settings', ({ votingTime, answerTime }, callback) => {
+    if (!currentRoom) {
+      callback?.({ success: false, error: 'Not in a room' });
+      return;
+    }
+
+    const room = gameManager.getRoom(currentRoom);
+    if (!room || room.hostId !== socket.id) {
+      callback?.({ success: false, error: 'Only host can change settings' });
+      return;
+    }
+
+    const updatedRoom = gameManager.updateSettings(currentRoom, { votingTime, answerTime });
+    if (updatedRoom) {
+      broadcastRoomUpdate(currentRoom, updatedRoom);
+      callback?.({ success: true });
+    }
   });
 
   // Join an existing room
@@ -83,7 +112,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const result = gameManager.startGame(currentRoom, category, prompts);
+    const result = gameManager.startGame(currentRoom, category);
     if (result.error) {
       callback({ success: false, error: result.error });
       return;
@@ -112,10 +141,60 @@ io.on('connection', (socket) => {
   socket.on('card_viewed', () => {
     if (!currentRoom) return;
 
-    const room = gameManager.advanceDeal(currentRoom);
-    if (room) {
-      io.to(currentRoom).emit('room_updated', { room: sanitizeRoom(room) });
+    const result = gameManager.advanceDeal(currentRoom);
+    if (result && result.room) {
+      broadcastRoomUpdate(currentRoom, result.room);
+      
+      // If all players viewed, start answering phase
+      if (result.allViewed) {
+        const room = gameManager.startAnswering(currentRoom, (code, updatedRoom) => {
+          // Timer expired - auto advance to discussion
+          if (updatedRoom) {
+            broadcastRoomUpdate(code, updatedRoom);
+          }
+        });
+        if (room) {
+          broadcastRoomUpdate(currentRoom, room);
+        }
+      }
     }
+  });
+
+  // Submit answer (during answering phase)
+  socket.on('submit_answer', ({ playerIndex, answer }, callback) => {
+    if (!currentRoom) {
+      callback?.({ success: false, error: 'Not in a room' });
+      return;
+    }
+
+    const result = gameManager.submitAnswer(currentRoom, playerIndex, answer);
+    if (result.error) {
+      callback?.({ success: false, error: result.error });
+      return;
+    }
+
+    // Notify all about submission count
+    broadcastRoomUpdate(currentRoom, result.room);
+    callback?.({ success: true });
+
+    // If all answered, end answering early
+    if (result.allAnswered) {
+      const room = gameManager.endAnswering(currentRoom);
+      if (room) {
+        broadcastRoomUpdate(currentRoom, room);
+      }
+    }
+  });
+
+  // Get all answers (for discussion phase)
+  socket.on('get_answers', (callback) => {
+    if (!currentRoom) {
+      callback?.({ success: false, error: 'Not in a room' });
+      return;
+    }
+
+    const answers = gameManager.getAnswers(currentRoom);
+    callback?.({ success: true, answers });
   });
 
   // Start voting (after discussion)
@@ -125,9 +204,21 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const room = gameManager.startVoting(currentRoom);
+    const existingRoom = gameManager.getRoom(currentRoom);
+    if (!existingRoom || existingRoom.hostId !== socket.id) {
+      callback?.({ success: false, error: 'Only host can start voting' });
+      return;
+    }
+
+    const room = gameManager.startVoting(currentRoom, (code, updatedRoom) => {
+      // Timer expired - auto calculate results
+      if (updatedRoom) {
+        broadcastRoomUpdate(code, updatedRoom);
+      }
+    });
+    
     if (room) {
-      io.to(currentRoom).emit('room_updated', { room: sanitizeRoom(room) });
+      broadcastRoomUpdate(currentRoom, room);
       callback?.({ success: true });
     }
   });
@@ -145,8 +236,27 @@ io.on('connection', (socket) => {
       return;
     }
 
-    io.to(currentRoom).emit('room_updated', { room: sanitizeRoom(result.room) });
+    broadcastRoomUpdate(currentRoom, result.room);
     callback({ success: true });
+
+    // If all voted, end voting early
+    if (result.allVoted) {
+      const room = gameManager.endVoting(currentRoom);
+      if (room) {
+        broadcastRoomUpdate(currentRoom, room);
+      }
+    }
+  });
+
+  // Get time remaining
+  socket.on('get_time', (callback) => {
+    if (!currentRoom) {
+      callback?.({ success: false, error: 'Not in a room' });
+      return;
+    }
+
+    const timeRemaining = gameManager.getTimeRemaining(currentRoom);
+    callback?.({ success: true, timeRemaining });
   });
 
   // Play again (reset for new round)
@@ -164,7 +274,7 @@ io.on('connection', (socket) => {
 
     const newRoom = gameManager.resetRound(currentRoom);
     if (newRoom) {
-      io.to(currentRoom).emit('room_updated', { room: sanitizeRoom(newRoom) });
+      broadcastRoomUpdate(currentRoom, newRoom);
       callback?.({ success: true });
     }
   });
@@ -205,6 +315,9 @@ io.on('connection', (socket) => {
 
 // Sanitize room data before sending to clients (hide sensitive info)
 function sanitizeRoom(room) {
+  const answeredCount = Object.keys(room.answers || {}).length;
+  const votedCount = Object.keys(room.votes || {}).length;
+  
   return {
     code: room.code,
     hostId: room.hostId,
@@ -215,10 +328,22 @@ function sanitizeRoom(room) {
     currentVoterIndex: room.currentVoterIndex,
     votes: room.votes,
     eliminatedPlayerIndex: room.eliminatedPlayerIndex,
-    // Don't send imposterIndex or promptPair to clients (security!)
-    // Individual prompts are requested separately
     hasPrompt: !!room.promptPair,
-    // Only send prompts in results phase
+    // Timer info
+    timerEndTime: room.timerEndTime,
+    timerType: room.timerType,
+    settings: room.settings,
+    // Progress info
+    answeredCount,
+    votedCount,
+    // Answers (only in discussion/voting/results)
+    ...(room.phase === 'discussion' || room.phase === 'voting' || room.phase === 'results' ? {
+      answers: room.players.map((p, idx) => ({
+        name: p.name,
+        answer: room.answers[idx] || "(No answer)",
+      })),
+    } : {}),
+    // Reveal imposter only in results
     ...(room.phase === 'results' ? {
       imposterIndex: room.imposterIndex,
       promptPair: room.promptPair,

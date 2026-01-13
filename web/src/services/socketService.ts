@@ -28,6 +28,18 @@ interface SimpleResponse {
   error?: string;
 }
 
+interface AnswersResponse {
+  success: boolean;
+  answers?: { name: string; answer: string }[];
+  error?: string;
+}
+
+interface TimeResponse {
+  success: boolean;
+  timeRemaining?: number;
+  error?: string;
+}
+
 class SocketService {
   private socket: Socket | null = null;
   private listeners: Map<string, Set<Function>> = new Map();
@@ -63,6 +75,7 @@ class SocketService {
       this.socket.on('player_left', (data) => this.emit('player_left', data));
       this.socket.on('game_started', (data) => this.emit('game_started', data));
       this.socket.on('room_updated', (data) => this.emit('room_updated', data));
+      this.socket.on('timer_tick', (data) => this.emit('timer_tick', data));
     });
   }
 
@@ -97,6 +110,14 @@ class SocketService {
     this.socket?.emit('leave_room');
   }
 
+  updateSettings(votingTime?: number, answerTime?: number): Promise<SimpleResponse> {
+    return new Promise((resolve) => {
+      this.socket?.emit('update_settings', { votingTime, answerTime }, (response: SimpleResponse) => {
+        resolve(response);
+      });
+    });
+  }
+
   startGame(category: string): Promise<SimpleResponse> {
     return new Promise((resolve) => {
       this.socket?.emit('start_game', { category }, (response: SimpleResponse) => {
@@ -115,6 +136,30 @@ class SocketService {
 
   cardViewed(): void {
     this.socket?.emit('card_viewed');
+  }
+
+  submitAnswer(playerIndex: number, answer: string): Promise<SimpleResponse> {
+    return new Promise((resolve) => {
+      this.socket?.emit('submit_answer', { playerIndex, answer }, (response: SimpleResponse) => {
+        resolve(response);
+      });
+    });
+  }
+
+  getAnswers(): Promise<AnswersResponse> {
+    return new Promise((resolve) => {
+      this.socket?.emit('get_answers', (response: AnswersResponse) => {
+        resolve(response);
+      });
+    });
+  }
+
+  getTime(): Promise<TimeResponse> {
+    return new Promise((resolve) => {
+      this.socket?.emit('get_time', (response: TimeResponse) => {
+        resolve(response);
+      });
+    });
   }
 
   startVoting(): Promise<SimpleResponse> {
@@ -152,7 +197,7 @@ class SocketService {
     this.listeners.get(event)?.delete(callback);
   }
 
-  private emit(event: string, data: any): void {
+  private emit(event: string, data: unknown): void {
     this.listeners.get(event)?.forEach((callback) => callback(data));
   }
 }

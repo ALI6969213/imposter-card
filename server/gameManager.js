@@ -1,8 +1,11 @@
 // Game Room Manager - handles all game state and logic
+const PromptGenerator = require('./promptGenerator');
 
 class GameManager {
   constructor() {
     this.rooms = new Map(); // roomCode -> GameRoom
+    this.promptGenerator = new PromptGenerator();
+    this.timers = new Map(); // roomCode -> timer
   }
 
   // Generate unique 4-digit code
@@ -26,17 +29,41 @@ class GameManager {
         isHost: true,
         isConnected: true,
       }],
-      phase: 'waiting', // waiting, deal, discussion, voting, results
+      phase: 'waiting', // waiting, deal, answering, discussion, voting, results
       category: null,
       promptPair: null,
       imposterIndex: null,
       votes: {},
+      answers: {}, // playerIndex -> answer
       eliminatedPlayerIndex: null,
-      currentPlayerIndex: 0, // For deal phase
-      currentVoterIndex: 0, // For voting phase
+      currentPlayerIndex: 0,
+      currentVoterIndex: 0,
       createdAt: Date.now(),
+      // Timer settings (in seconds)
+      settings: {
+        answerTime: 30,    // 30 seconds to answer
+        votingTime: 60,    // 60 seconds to vote (configurable by host)
+      },
+      // Timer state
+      timerEndTime: null,
+      timerType: null, // 'answering' or 'voting'
     };
     this.rooms.set(code, room);
+    return room;
+  }
+
+  // Update room settings
+  updateSettings(code, settings) {
+    const room = this.rooms.get(code);
+    if (!room) return null;
+    
+    if (settings.votingTime !== undefined) {
+      room.settings.votingTime = Math.max(15, Math.min(300, settings.votingTime)); // 15s - 5min
+    }
+    if (settings.answerTime !== undefined) {
+      room.settings.answerTime = Math.max(15, Math.min(120, settings.answerTime)); // 15s - 2min
+    }
+    
     return room;
   }
 
@@ -85,6 +112,7 @@ class GameManager {
 
     // Delete room if empty
     if (room.players.length === 0) {
+      this.clearTimer(code);
       this.rooms.delete(code);
       return null;
     }
@@ -92,50 +120,26 @@ class GameManager {
     return room;
   }
 
-  // Mark player as disconnected (for reconnection)
-  disconnectPlayer(code, playerId) {
-    const room = this.rooms.get(code);
-    if (!room) return null;
-
-    const player = room.players.find(p => p.id === playerId);
-    if (player) {
-      player.isConnected = false;
-    }
-    return room;
-  }
-
-  // Reconnect player
-  reconnectPlayer(code, playerId) {
-    const room = this.rooms.get(code);
-    if (!room) return null;
-
-    const player = room.players.find(p => p.id === playerId);
-    if (player) {
-      player.isConnected = true;
-    }
-    return room;
-  }
-
-  // Start the game
-  startGame(code, category, prompts) {
+  // Start the game with dynamic prompts
+  startGame(code, category) {
     const room = this.rooms.get(code);
     if (!room) return { error: 'Room not found' };
     if (room.players.length < 3) return { error: 'Need at least 3 players' };
 
-    // Select random prompt from category
-    const categoryPrompts = prompts.filter(p => p.category === category);
-    if (categoryPrompts.length === 0) return { error: 'Invalid category' };
-
-    const promptPair = categoryPrompts[Math.floor(Math.random() * categoryPrompts.length)];
+    // Generate dynamic prompt
+    const promptPair = this.promptGenerator.generate(category);
     const imposterIndex = Math.floor(Math.random() * room.players.length);
 
-    room.category = category;
+    room.category = category || 'spicy';
     room.promptPair = promptPair;
     room.imposterIndex = imposterIndex;
     room.phase = 'deal';
     room.currentPlayerIndex = 0;
     room.votes = {};
+    room.answers = {};
     room.eliminatedPlayerIndex = null;
+    room.timerEndTime = null;
+    room.timerType = null;
 
     return { room };
   }
@@ -151,26 +155,99 @@ class GameManager {
     return room.promptPair.majority;
   }
 
-  // Advance deal phase
-  advanceDeal(code) {
+  // All players viewed cards - start answering phase
+  startAnswering(code, onTimeout) {
     const room = this.rooms.get(code);
     if (!room) return null;
 
-    room.currentPlayerIndex++;
-    if (room.currentPlayerIndex >= room.players.length) {
-      room.phase = 'discussion';
-    }
+    room.phase = 'answering';
+    room.answers = {};
+    
+    // Set timer
+    const endTime = Date.now() + (room.settings.answerTime * 1000);
+    room.timerEndTime = endTime;
+    room.timerType = 'answering';
+    
+    // Set timeout
+    this.clearTimer(code);
+    const timer = setTimeout(() => {
+      this.endAnswering(code);
+      if (onTimeout) onTimeout(code, this.rooms.get(code));
+    }, room.settings.answerTime * 1000);
+    this.timers.set(code, timer);
+
     return room;
   }
 
-  // Start voting phase
-  startVoting(code) {
+  // Submit answer
+  submitAnswer(code, playerIndex, answer) {
+    const room = this.rooms.get(code);
+    if (!room) return { error: 'Room not found' };
+    if (room.phase !== 'answering') return { error: 'Not in answering phase' };
+    if (room.answers[playerIndex] !== undefined) return { error: 'Already answered' };
+    
+    room.answers[playerIndex] = answer.trim().substring(0, 280); // Max 280 chars
+
+    // Check if all answered
+    const allAnswered = room.players.every((_, idx) => room.answers[idx] !== undefined);
+    
+    return { room, allAnswered };
+  }
+
+  // End answering phase
+  endAnswering(code) {
+    const room = this.rooms.get(code);
+    if (!room) return null;
+    
+    this.clearTimer(code);
+    
+    // Fill in empty answers
+    room.players.forEach((_, idx) => {
+      if (room.answers[idx] === undefined) {
+        room.answers[idx] = "(No answer submitted)";
+      }
+    });
+    
+    room.phase = 'discussion';
+    room.timerEndTime = null;
+    room.timerType = null;
+    
+    return room;
+  }
+
+  // Get all answers (for discussion phase)
+  getAnswers(code) {
+    const room = this.rooms.get(code);
+    if (!room) return null;
+    
+    return room.players.map((player, idx) => ({
+      name: player.name,
+      answer: room.answers[idx] || "(No answer)",
+    }));
+  }
+
+  // Start voting phase with timer
+  startVoting(code, onTimeout) {
     const room = this.rooms.get(code);
     if (!room) return null;
 
     room.phase = 'voting';
     room.currentVoterIndex = 0;
     room.votes = {};
+    
+    // Set timer
+    const endTime = Date.now() + (room.settings.votingTime * 1000);
+    room.timerEndTime = endTime;
+    room.timerType = 'voting';
+    
+    // Set timeout
+    this.clearTimer(code);
+    const timer = setTimeout(() => {
+      this.endVoting(code);
+      if (onTimeout) onTimeout(code, this.rooms.get(code));
+    }, room.settings.votingTime * 1000);
+    this.timers.set(code, timer);
+
     return room;
   }
 
@@ -186,11 +263,20 @@ class GameManager {
     room.currentVoterIndex++;
 
     // Check if all votes are in
-    if (Object.keys(room.votes).length === room.players.length) {
-      this.calculateResults(code);
-    }
+    const allVoted = Object.keys(room.votes).length === room.players.length;
 
-    return { room };
+    return { room, allVoted };
+  }
+
+  // End voting and calculate results
+  endVoting(code) {
+    const room = this.rooms.get(code);
+    if (!room) return null;
+    
+    this.clearTimer(code);
+    this.calculateResults(code);
+    
+    return room;
   }
 
   // Calculate voting results
@@ -203,16 +289,24 @@ class GameManager {
       voteCounts[votedFor] = (voteCounts[votedFor] || 0) + 1;
     });
 
-    const maxVotes = Math.max(...Object.values(voteCounts), 0);
-    const tiedPlayers = Object.entries(voteCounts)
-      .filter(([_, count]) => count === maxVotes)
-      .map(([index]) => parseInt(index));
+    // If no votes, pick random
+    if (Object.keys(voteCounts).length === 0) {
+      room.eliminatedPlayerIndex = Math.floor(Math.random() * room.players.length);
+    } else {
+      const maxVotes = Math.max(...Object.values(voteCounts), 0);
+      const tiedPlayers = Object.entries(voteCounts)
+        .filter(([_, count]) => count === maxVotes)
+        .map(([index]) => parseInt(index));
 
-    room.eliminatedPlayerIndex = tiedPlayers.length === 1
-      ? tiedPlayers[0]
-      : tiedPlayers[Math.floor(Math.random() * tiedPlayers.length)];
+      room.eliminatedPlayerIndex = tiedPlayers.length === 1
+        ? tiedPlayers[0]
+        : tiedPlayers[Math.floor(Math.random() * tiedPlayers.length)];
+    }
 
     room.phase = 'results';
+    room.timerEndTime = null;
+    room.timerType = null;
+    
     return room;
   }
 
@@ -221,16 +315,34 @@ class GameManager {
     const room = this.rooms.get(code);
     if (!room) return null;
 
+    this.clearTimer(code);
+    
     room.phase = 'waiting';
     room.category = null;
     room.promptPair = null;
     room.imposterIndex = null;
     room.votes = {};
+    room.answers = {};
     room.eliminatedPlayerIndex = null;
     room.currentPlayerIndex = 0;
     room.currentVoterIndex = 0;
+    room.timerEndTime = null;
+    room.timerType = null;
 
     return room;
+  }
+
+  // Advance deal phase
+  advanceDeal(code) {
+    const room = this.rooms.get(code);
+    if (!room) return null;
+
+    room.currentPlayerIndex++;
+    
+    // Check if all players have viewed
+    const allViewed = room.currentPlayerIndex >= room.players.length;
+    
+    return { room, allViewed };
   }
 
   // Get room by code
@@ -238,11 +350,29 @@ class GameManager {
     return this.rooms.get(code);
   }
 
-  // Clean up old rooms (call periodically)
-  cleanupOldRooms(maxAgeMs = 3600000) { // 1 hour default
+  // Clear timer for room
+  clearTimer(code) {
+    const timer = this.timers.get(code);
+    if (timer) {
+      clearTimeout(timer);
+      this.timers.delete(code);
+    }
+  }
+
+  // Get time remaining for current phase
+  getTimeRemaining(code) {
+    const room = this.rooms.get(code);
+    if (!room || !room.timerEndTime) return null;
+    
+    return Math.max(0, Math.ceil((room.timerEndTime - Date.now()) / 1000));
+  }
+
+  // Clean up old rooms
+  cleanupOldRooms(maxAgeMs = 3600000) {
     const now = Date.now();
     for (const [code, room] of this.rooms.entries()) {
       if (now - room.createdAt > maxAgeMs) {
+        this.clearTimer(code);
         this.rooms.delete(code);
       }
     }

@@ -1,4 +1,4 @@
-export type GamePhase = 'home' | 'lobby' | 'deal' | 'discussion' | 'voting' | 'results';
+export type GamePhase = 'home' | 'lobby' | 'deal' | 'answering' | 'discussion' | 'voting' | 'results';
 
 export type AppTheme = 'system' | 'light' | 'dark';
 
@@ -30,13 +30,23 @@ export interface VoteResult {
   votes: number;
 }
 
-export type NetPhase = 'waiting' | 'deal' | 'discussion' | 'voting' | 'results';
+export type NetPhase = 'waiting' | 'deal' | 'answering' | 'discussion' | 'voting' | 'results';
 
 export interface NetPlayer {
   id: string;
   name: string;
   isHost: boolean;
   isConnected: boolean;
+}
+
+export interface PlayerAnswer {
+  name: string;
+  answer: string;
+}
+
+export interface RoomSettings {
+  answerTime: number;  // seconds
+  votingTime: number;  // seconds
 }
 
 export interface NetRoom {
@@ -50,11 +60,16 @@ export interface NetRoom {
   votes: Record<number, number>;
   eliminatedPlayerIndex: number | null;
   hasPrompt: boolean;
+  // Timer info
+  timerEndTime: number | null;
+  timerType: 'answering' | 'voting' | null;
+  settings: RoomSettings;
+  // Progress tracking
+  answeredCount: number;
+  votedCount: number;
+  // Answers (available after answering phase)
+  answers?: PlayerAnswer[];
+  // Reveal info (only in results)
   imposterIndex?: number;
-  promptPair?: {
-    id: string;
-    category: string;
-    majority: string;
-    imposter: string;
-  };
+  promptPair?: PromptPair;
 }
